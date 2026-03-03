@@ -31,11 +31,9 @@ async fn main() {
         .route("/ask", post(handle_audio))
         .layer(cors);
 
-    // Render injects PORT env var — must bind to it or Render kills the service
     let port = env::var("PORT").unwrap_or_else(|_| "8000".to_string());
     let addr: std::net::SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
 
-    // Print BEFORE binding — Render scans for this line
     println!("Server running on http://0.0.0.0:{}", port);
 
     axum::Server::bind(&addr)
@@ -47,10 +45,22 @@ async fn main() {
 async fn handle_audio(mut multipart: Multipart) -> Json<LLMResponse> {
     let mut audio_bytes = Vec::new();
     let mut filename = String::from("audio.webm");
+    let mut session_id = String::from("default_session");
 
     while let Some(field) = multipart.next_field().await.unwrap() {
-        if let Some(name) = field.file_name() {
-            filename = name.to_string();
+        let field_name = field.name().unwrap_or("").to_string();
+
+        if field_name == "session_id" {
+            // Read session_id as text
+            let bytes = field.bytes().await.unwrap();
+            session_id = String::from_utf8_lossy(&bytes).trim().to_string();
+            println!("Session ID: {}", session_id);
+            continue;
+        }
+
+        // It's the audio field
+        if let Some(fname) = field.file_name() {
+            filename = fname.to_string();
         }
         let data = field.bytes().await.unwrap();
         audio_bytes.extend_from_slice(&data);
@@ -94,25 +104,56 @@ async fn handle_audio(mut multipart: Multipart) -> Json<LLMResponse> {
     }
     println!("User said: {}", user_text);
 
-    // ── 2. Groq LLaMA ─────────────────────────────────────────────────────
-    let llm_json = client
-        .post("https://api.groq.com/openai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", groq_key))
-        .json(&serde_json::json!({
-            "model": "llama-3.1-8b-instant",
-            "messages": [
-                { "role": "system", "content": "You are Nova, a warm friendly AI assistant. Reply in 1-2 sentences max. Be natural." },
-                { "role": "user",   "content": user_text }
-            ],
-            "temperature": 0.7,
-            "max_tokens": 100
-        }))
-        .send().await.unwrap()
-        .json::<serde_json::Value>().await.unwrap();
+    // ── 2. Friend's Custom LLM ────────────────────────────────────────────
+    let llm_backend_url = env::var("LLM_BACKEND_URL")
+        .unwrap_or_else(|_| "https://ai-avatar-chatbot-3g3w.onrender.com/chat".to_string());
 
-    let llm_text = llm_json["choices"][0]["message"]["content"]
-        .as_str().unwrap_or("").trim().to_string();
-    println!("AI reply: {}", llm_text);
+    let llm_resp = client
+        .post(&llm_backend_url)
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "question": user_text,
+            "session_id": session_id
+        }))
+        .send().await;
+
+    let llm_text = match llm_resp {
+        Ok(resp) if resp.status().is_success() => {
+            // Read raw body text first so we can debug exactly what comes back
+            let raw = resp.text().await.unwrap_or_default();
+            println!("LLM raw response: {}", raw);
+
+            let json: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+            println!("LLM json keys: {:?}", json.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+
+            // Try every possible field name
+            let text = json["Response"]
+                .as_str()
+                .or_else(|| json["response"].as_str())
+                .or_else(|| json["text"].as_str())
+                .or_else(|| json["answer"].as_str())
+                .or_else(|| json["message"].as_str())
+                .or_else(|| json["output"].as_str())
+                .or_else(|| json["result"].as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            println!("LLM extracted text: '{}'", text);
+            text
+        }
+        Ok(resp) => {
+            println!("LLM backend error status: {}", resp.status());
+            String::new()
+        }
+        Err(e) => {
+            println!("LLM backend request failed: {}", e);
+            String::new()
+        }
+    };
+
+    if llm_text.is_empty() {
+        return Json(LLMResponse { text: String::new(), audio_b64: String::new() });
+    }
 
     // ── 3. ElevenLabs TTS (optional) ─────────────────────────────────────
     let audio_b64 = if let Ok(el_key) = env::var("ELEVENLABS_API_KEY") {
