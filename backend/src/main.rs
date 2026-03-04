@@ -19,6 +19,7 @@ struct LLMResponse {
 }
 
 #[tokio::main]
+
 async fn main() {
     dotenv().ok();
 
@@ -76,6 +77,16 @@ async fn handle_audio(mut multipart: Multipart) -> Json<LLMResponse> {
     let client = Client::new();
 
     // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+      // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+        // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+          // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+            // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+              // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+                // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+                  // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+                    // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+                      // ── 1. Groq Whisper STT ───────────────────────────────────────────────
+                        // ── 1. Groq Whisper STT ───────────────────────────────────────────────
     let mime = if filename.ends_with(".ogg") { "audio/ogg" }
                else if filename.ends_with(".mp4") { "audio/mp4" }
                else { "audio/webm" };
